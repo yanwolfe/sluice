@@ -39,7 +39,8 @@ struct Memory: Codable {
     init(from decoder: any Decoder) throws {
         let keyed = try decoder.container(keyedBy: CodingKeys.self)
         accounts = try keyed.decodeIfPresent([String: Known].self, forKey: .accounts) ?? [:]
-        router = try keyed.decode(Router.self, forKey: .router)
+        // The router holds only what lives an hour, so one an older Sluice wrote in another shape is started afresh.
+        router = (try? keyed.decode(Router.self, forKey: .router)) ?? Router()
         clients = try keyed.decodeIfPresent([String: String].self, forKey: .clients) ?? [:]
     }
 }
@@ -337,8 +338,8 @@ actor Accounts {
         }
     }
 
-    func served(_ conversation: String, by id: String, cacheLifetime: TimeInterval) {
-        memory.router.served(conversation, by: id, cacheLifetime: cacheLifetime, now: Date())
+    func served(_ conversation: String, model: String?, by id: String, cacheLifetime: TimeInterval) {
+        memory.router.served(conversation, model: model, by: id, cacheLifetime: cacheLifetime, now: Date())
         remember()
     }
 

@@ -176,13 +176,16 @@ private actor Hits {
           "fake/a":{"plan":{"name":"Big","multiple":20,"business":false,"price":200},"windows":[{"name":"5h","used":1,"resetsAt":1000}],
             "scoped":[{"name":"model","used":0.2,"resetsAt":9000000000}],"resets":[{"id":"r","refills":["7d"],"left":1,"usable":true}],"sizing":{"weighed":0,"answers":0,"rises":[]}},
           "fake/b":{"windows":[{"name":"7d","used":0.5,"resetsAt":9000000000}],"scoped":[],"resets":[],"sizing":{"weighed":0,"answers":0,"rises":[]}}},
-         "router":{"holds":{}},"clients":{}}
+         "router":{"holds":[{"conversation":"talk","model":"m","account":"fake/a","warmUntil":9000000000}]},"clients":{}}
         """#.utf8))
         let accounts = try Accounts(storage: Storage(loadAccounts: { stored }, storeAccounts: { _ in }, config: { Config() }, storeConfig: { _ in }, loadMemory: { memory }, storeMemory: { _ in }))
         #expect(try await accounts.candidates(provider: "fake", pin: nil, folder: nil, conversation: nil, model: nil).accounts.map(\.label) == ["b", "a"])
         let told = try await accounts.status().first
-        #expect(told?.plan?.multiple == 20 && told?.scoped.map(\.name) == ["model"] && told?.resets.map(\.id) == ["r"])
-        // The file as 0.11.0 wrote it: what it knew by account is relearned, and where its conversations are held is kept.
+        #expect(told?.plan?.multiple == 20 && told?.scoped.map(\.name) == ["model"] && told?.resets.map(\.id) == ["r"] && told?.warmConversations == 1)
+        // The file as 1.2.1 wrote it, holding conversations by name alone: what it knew by account is still read.
+        let held = try JSONDecoder().decode(Memory.self, from: Data(#"{"accounts":{"fake/a":{"windows":[],"scoped":[],"resets":[],"sizing":{"weighed":0,"answers":0,"rises":[]}}},"router":{"holds":{"talk":{"account":"fake/a","warmUntil":9000000000}}},"clients":{}}"#.utf8))
+        #expect(held.accounts.keys.sorted() == ["fake/a"])
+        // The file as 0.11.0 wrote it: what it knew by account is relearned.
         let older = try JSONDecoder().decode(Memory.self, from: Data(#"{"usage":{"fake/a":[]},"plans":{},"router":{"holds":{}}}"#.utf8))
         #expect(older.accounts.isEmpty)
     }

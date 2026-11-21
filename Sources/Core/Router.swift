@@ -30,12 +30,16 @@ private extension Reset {
 /// time if not used, and the most is had of them by using first what is lost soonest. Pure: time and
 /// what the accounts stand at come in as arguments.
 struct Router: Codable {
+    /// A prompt cache is one model's own, so a conversation is held apart for each model it asks for:
+    /// one model moving on to another account does not take the others with it.
     private struct Hold: Codable {
+        var conversation: String
+        var model: String?
         var account: String
         var warmUntil: Date
     }
 
-    private var holds: [String: Hold] = [:]
+    private var holds: [Hold] = []
 
     /// A reset lapsing within this long is used on whatever it refills, rather than lost.
     static let soon: TimeInterval = 6 * 3600
@@ -43,9 +47,9 @@ struct Router: Codable {
     static let sitting: TimeInterval = 86400
 
     /// The pool's accounts to try for a request, in order. Its unspent accounts: the one holding this
-    /// conversation's warm cache first, then by when what each has left is lost. That is when its longest
-    /// window resets, or sooner where a reset it holds lapses first, since that reset gives back what is
-    /// used before then. Untouched accounts go last, so an idle window is not started early.
+    /// conversation's warm cache for `model` first, then by when what each has left is lost. That is when
+    /// its longest window resets, or sooner where a reset it holds lapses first, since that reset gives
+    /// back what is used before then. Untouched accounts go last, so an idle window is not started early.
     /// With the whole pool spent, the account back soonest, so the client hears the provider's own refusal.
     func order(_ pool: [Standing], conversation: String?, model: String?, now: Date) -> [String] {
         func back(_ standing: Standing) -> Date? { standing.spent(for: model).map(\.resetsAt).max() }
@@ -58,7 +62,8 @@ struct Router: Codable {
         let open = pool.filter { back($0) == nil }
         guard !open.isEmpty else { return pool.min { back($0)! < back($1)! }.map { [$0.account] } ?? [] }
         var ordered = open.enumerated().sorted { (lostAt($0.element), $0.offset) < (lostAt($1.element), $1.offset) }.map(\.element.account)
-        if let conversation, let hold = holds[conversation], hold.warmUntil > now, let held = ordered.firstIndex(of: hold.account) {
+        if let conversation, let hold = holds.first(where: { ($0.conversation, $0.model) == (conversation, model) && $0.warmUntil > now }),
+           let held = ordered.firstIndex(of: hold.account) {
             ordered.insert(ordered.remove(at: held), at: 0)
         }
         return ordered
@@ -101,13 +106,13 @@ struct Router: Codable {
         .min { $0.lapses < $1.lapses }?.reset
     }
 
-    /// `account` answered `conversation`, whose prompt cache now lives there for `lifetime`.
-    mutating func served(_ conversation: String, by account: String, cacheLifetime lifetime: TimeInterval, now: Date) {
-        holds = holds.filter { $0.value.warmUntil > now }
-        holds[conversation] = Hold(account: account, warmUntil: now.addingTimeInterval(lifetime))
+    /// `account` answered `conversation` for `model`, whose prompt cache now lives there for `lifetime`.
+    mutating func served(_ conversation: String, model: String?, by account: String, cacheLifetime lifetime: TimeInterval, now: Date) {
+        holds.removeAll { $0.warmUntil <= now || ($0.conversation, $0.model) == (conversation, model) }
+        holds.append(Hold(conversation: conversation, model: model, account: account, warmUntil: now.addingTimeInterval(lifetime)))
     }
 
     func warmConversations(on account: String, now: Date) -> Int {
-        holds.values.count { $0.account == account && $0.warmUntil > now }
+        Set(holds.filter { $0.account == account && $0.warmUntil > now }.map(\.conversation)).count
     }
 }

@@ -10,7 +10,8 @@ Within a profile's pool:
   account that has spent that share; the account still answers for other models.
 - **Stay warm.** A conversation stays on the account that last served it for as long as its prompt
   cache lives there (an hour for Claude Code, assumed half an hour for Codex). After that it is
-  placed afresh.
+  placed afresh. A cache is one model's own, so each model a conversation asks for, its subagents'
+  too, is held apart: one moving to another account does not take the others with it.
 - **Keep going.** When an account refuses because an allowance is spent, the request is resent on
   the next account before the client sees anything. When the last one refuses too, each is asked
   how it stands now, and one that is back after all gets the request. A plain rate limit is passed

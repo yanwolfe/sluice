@@ -307,7 +307,7 @@ public final class Relay: Sendable {
                     continue
                 }
                 if let conversation, !reading.refused {
-                    await accounts.served(conversation.id, by: account.id, cacheLifetime: conversation.cacheLifetime)
+                    await accounts.served(conversation.id, model: model, by: account.id, cacheLifetime: conversation.cacheLifetime)
                 }
                 let folder = request.callerFolder
                 let counted = Metered(base: body, count: provider.count) { spend in

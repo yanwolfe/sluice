@@ -27,21 +27,30 @@ import Testing
 
     @Test func aWarmConversationStaysWhereItsCacheIs() {
         var router = Router()
-        router.served("talk", by: b.id, cacheLifetime: 3600, now: now)
+        router.served("talk", model: nil, by: b.id, cacheLifetime: 3600, now: now)
         let usage = [b.id: week(0.5, resetsIn: 90), c.id: week(0.2, resetsIn: 20)]
         #expect(order(router, conversation: "talk", usage: usage).first == "b")
         #expect(order(router, conversation: "other", usage: usage).first == "c")
     }
 
+    /// A session's subagents ask for other models than it does: where one model's cache is says nothing of another's.
+    @Test func aConversationsRequestForOneModelDoesNotFollowAnotherModelsCache() {
+        var router = Router()
+        router.served("talk", model: "claude-fable-5", by: b.id, cacheLifetime: 3600, now: now)
+        let usage = [b.id: week(0.5, resetsIn: 90), c.id: week(0.2, resetsIn: 20)]
+        #expect(order(router, conversation: "talk", model: "claude-opus-5", usage: usage).first == "c")
+        #expect(order(router, conversation: "talk", model: "claude-fable-5", usage: usage).first == "b")
+    }
+
     @Test func aColdConversationIsPlacedAfresh() {
         var router = Router()
-        router.served("talk", by: b.id, cacheLifetime: 300, now: now.addingTimeInterval(-301))
+        router.served("talk", model: nil, by: b.id, cacheLifetime: 300, now: now.addingTimeInterval(-301))
         #expect(order(router, conversation: "talk", usage: [b.id: week(0.5, resetsIn: 90), c.id: week(0.2, resetsIn: 20)]).first == "c")
     }
 
     @Test func aSpentAccountLosesEvenItsWarmConversations() {
         var router = Router()
-        router.served("talk", by: c.id, cacheLifetime: 3600, now: now)
+        router.served("talk", model: nil, by: c.id, cacheLifetime: 3600, now: now)
         #expect(order(router, conversation: "talk", usage: [b.id: week(0.5, resetsIn: 90), c.id: week(1, resetsIn: 20)]) == ["b", "a"])
     }
 
