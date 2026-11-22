@@ -9,7 +9,7 @@ Claude Code and Codex so far.
 ## Install
 
 ```sh
-brew install --cask vikng-dev/tap/sluice
+brew install --cask yanwolfe/tap/sluice
 ```
 
 Open Sluice once and press **Turn on**. Then sign your accounts in, once each:

@@ -16,7 +16,7 @@ public struct Release: Sendable, Equatable {
 /// only when macOS finds it signed by the developer that signed the one running and notarized by
 /// Apple: that check, and none of Sluice's own, is what tells a real update.
 public enum Update {
-    static let latest = URL(string: "https://api.github.com/repos/vikng-dev/sluice/releases/latest")!
+    static let latest = URL(string: "https://api.github.com/repos/yanwolfe/sluice/releases/latest")!
 
     /// Whether `version` comes after `other`, number by number: 1.10.0 is after 1.9.2.
     static func isNewer(_ version: String, than other: String) -> Bool {

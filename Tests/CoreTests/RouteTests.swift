@@ -222,7 +222,7 @@ import Testing
 
 @Suite struct UpdateTests {
     /// GitHub's account of a release, cut to what is read of it (docs/wire.md).
-    private let answer = Data(#"{"tag_name":"v1.10.0","assets":[{"name":"Sluice.dmg","browser_download_url":"https://github.com/vikng-dev/sluice/releases/download/v1.10.0/Sluice.dmg"},{"name":"Sluice-v1.10.0-macos.zip","browser_download_url":"https://github.com/vikng-dev/sluice/releases/download/v1.10.0/Sluice-v1.10.0-macos.zip"}]}"#.utf8)
+    private let answer = Data(#"{"tag_name":"v1.10.0","assets":[{"name":"Sluice.dmg","browser_download_url":"https://github.com/yanwolfe/sluice/releases/download/v1.10.0/Sluice.dmg"},{"name":"Sluice-v1.10.0-macos.zip","browser_download_url":"https://github.com/yanwolfe/sluice/releases/download/v1.10.0/Sluice-v1.10.0-macos.zip"}]}"#.utf8)
 
     @Test func aReleaseIsTakenOnlyWhenItsNumbersComeAfterTheOneRunning() throws {
         // By its letters 1.10.0 comes before 1.9.2.

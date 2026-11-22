@@ -1,7 +1,7 @@
 # Use it
 
 ```sh
-brew install --cask vikng-dev/tap/sluice
+brew install --cask yanwolfe/tap/sluice
 ```
 
 Open Sluice once. macOS keeps it running from then on: it starts with the Mac and comes back if it
