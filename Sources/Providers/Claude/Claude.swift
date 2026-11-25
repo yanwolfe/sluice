@@ -211,6 +211,13 @@ public struct Claude: Provider {
         return Reading(windows: windows, refused: refused)
     }
 
+    /// As answered to an account whose subscription was canceled (docs/wire.md, "An account that lost its plan").
+    public func barred(status: Int, body: Data) -> Barred? {
+        let code = ((body.object?["error"] as? [String: Any])?["details"] as? [String: Any])?["error_code"] as? String
+        guard status == 403, code == "oauth_not_allowed_for_organization" else { return nil }
+        return .denied("Claude no longer lets it be used: its subscription has lapsed, or its organization does not allow Claude Code")
+    }
+
     private struct Grant: Decodable {
         var access_token: String
         var refresh_token: String?
@@ -229,8 +236,8 @@ public struct Claude: Provider {
         let headers = Self.headers(account.accessToken)
         async let usage = HTTPCall.send("GET", Self.usage, headers: headers)
         async let profile = HTTPCall.send("GET", Self.profile, headers: headers)
-        for status in try await [usage.0, profile.0] where status != 200 {
-            throw ProviderError.answered(status)
+        for (status, body) in try await [usage, profile] where status != 200 {
+            throw failure(status: status, body: body)
         }
         return try await Usage(plan: Self.plan(inProfile: profile.1), windows: Self.windows(inUsage: usage.1), scoped: Self.scoped(inUsage: usage.1))
     }
@@ -282,7 +289,7 @@ public struct Claude: Provider {
     public func resets(of account: Account, as client: String?) async throws -> [Reset]? {
         guard let client else { return nil }
         let (status, body) = try await HTTPCall.send("GET", Self.grants, headers: Self.headers(account.accessToken, as: client))
-        guard status == 200 else { throw ProviderError.answered(status) }
+        guard status == 200 else { throw failure(status: status, body: body) }
         return try Self.resets(inUsage: body)
     }
 
@@ -308,7 +315,7 @@ public struct Claude: Provider {
         // A fixed host and an id the provider gave.
         let address = URL(string: "https://api.anthropic.com/api/organizations/\(organization)/reset_rate_limits")!
         let (status, body) = try await HTTPCall.send("POST", address, headers: Self.headers(account.accessToken, as: client), json: ["program": "cedar_ember", "grant_id": reset.id, "request_id": UUID().uuidString])
-        guard status == 200 else { throw ProviderError.answered(status) }
+        guard status == 200 else { throw failure(status: status, body: body) }
         if let refusal = try Self.refusal(inClaim: body) { throw refusal }
     }
 

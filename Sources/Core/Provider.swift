@@ -39,6 +39,9 @@ public protocol Provider: Sendable {
     func model(of request: HTTPRequest) -> String?
     /// What a response's status and headers (names lowercased) say about the account that answered.
     func reading(status: Int, headers: [String: String]) -> Reading
+    /// Why an error answer, from any of the provider's addresses, says in so many words that the account
+    /// cannot be served at all; nil where it does not.
+    func barred(status: Int, body: Data) -> Barred?
     /// Reads into `spend` what one event of an answer says it cost: the JSON of a stream's event, or of an
     /// answer in one piece. Asked only of events that have a `usage` key.
     func count(_ event: Data, into spend: inout Spend)
@@ -152,19 +155,29 @@ public struct Reading: Sendable, Equatable {
 }
 
 public enum ProviderError: Error, CustomStringConvertible {
-    /// The provider answered a sign-in or renewal with this status and error code.
+    /// The provider answered a call with this status and error code.
     case refused(status: Int, code: String?)
     case invalidResponse
-    case signedOut
-
-    /// What an answer other than 200 means: the sign-in is gone, or the provider refused.
-    public static func answered(_ status: Int) -> ProviderError { status == 401 ? .signedOut : .refused(status: status, code: nil) }
 
     public var description: String {
         switch self {
         case .refused(let status, let code): "the provider refused (\(status)\(code.map { ", \($0)" } ?? ""))"
         case .invalidResponse: "the provider's answer could not be read"
+        }
+    }
+}
+
+/// Why the provider will not serve an account at all. It holds until the account answers again or is signed in again.
+public enum Barred: Error, CustomStringConvertible, Sendable, Equatable {
+    /// Its sign-in is gone.
+    case signedOut
+    /// It is signed in, and the provider will not serve it; why, in words to show.
+    case denied(String)
+
+    public var description: String {
+        switch self {
         case .signedOut: "the account is no longer signed in"
+        case .denied(let why): why
         }
     }
 }
@@ -203,6 +216,13 @@ public enum HTTPCall {
 }
 
 public extension Provider {
+    /// What an answer other than 200 to a call of Sluice's own is. Such a call is well formed, so a 401 says
+    /// the sign-in is gone; to a client's request it may be about the request.
+    func failure(status: Int, body: Data) -> any Error {
+        if let barred = barred(status: status, body: body) ?? (status == 401 ? .signedOut : nil) { return barred }
+        return ProviderError.refused(status: status, code: nil)
+    }
+
     /// Where this provider's client reaches Sluice.
     var address: String { "\(Sluice.address)/\(id)" }
 

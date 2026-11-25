@@ -99,7 +99,7 @@ actor Accounts {
         /// How many requests it is at work on now.
         var streaming = 0
         /// Why it cannot serve; nil when nothing is known to be wrong.
-        var problem: String?
+        var problem: Problem?
         /// When its usage was last told, and its resets last asked for.
         var usageAsked: Date?
         var resetsAsked: Date?
@@ -108,6 +108,22 @@ actor Accounts {
         /// No reset is used on it unasked: one is being used there now, or one was and it is not known
         /// to have gone well.
         var paused = false
+    }
+
+    /// Why an account cannot serve, until it next answers.
+    private enum Problem {
+        /// Its provider will not serve it at all, so it is passed over while another of its pool is not.
+        case barred(Barred)
+        /// Its sign-in could not be renewed, which is tried again at its next request.
+        case unrenewed(any Error)
+
+        func words(provider: String) -> String {
+            switch self {
+            case .barred(.signedOut): "Signed out. Run: sluice login \(provider)"
+            case .barred(.denied(let why)): why
+            case .unrenewed(let error): "Could not renew its sign-in: \(error)"
+            }
+        }
     }
 
     init(storage: Storage, formulas: [String: Formula] = [:]) throws {
@@ -128,7 +144,7 @@ actor Accounts {
             return AccountStatus(
                 provider: $0.provider, label: $0.label, profile: config.profile(ofAccount: $0.label), plan: plan,
                 windows: live.windows, scoped: live.scoped, resets: live.resets,
-                warmConversations: memory.router.warmConversations(on: $0.id, now: now), lastAnswered: run[$0.id]?.answered, streaming: run[$0.id]?.streaming ?? 0, problem: run[$0.id]?.problem,
+                warmConversations: memory.router.warmConversations(on: $0.id, now: now), lastAnswered: run[$0.id]?.answered, streaming: run[$0.id]?.streaming ?? 0, problem: run[$0.id]?.problem?.words(provider: $0.provider),
                 size: sizing?.size ?? formulas[$0.provider]?.size(of: plan) ?? Double(plan?.multiple ?? 1), spread: sizing?.spread
             )
         }
@@ -153,23 +169,31 @@ actor Accounts {
         accounts = next
     }
 
+    /// A sign-in, new or again: what was wrong with the account before is not known of it now.
+    func signedIn(_ account: Account) throws {
+        try save(account)
+        run[account.id]?.problem = nil
+    }
+
     /// The profile the caller's folder belongs to, and the accounts to try for a request for `model`, in
-    /// order: its pool at the provider, or of that pool the one account a pin in the address names. With
-    /// them, all of the accounts the request could be answered by, for when those tried all refuse.
+    /// order: its pool at the provider, or of that pool the one account a pin in the address names, without
+    /// those barred while any is not. With them, all of the accounts the request could be answered by, for
+    /// when those tried all refuse.
     func candidates(provider: String, pin: String?, folder: String?, conversation: String?, model: String?) throws -> (profile: String, accounts: [Account], pool: [Account]) {
         let config = try storage.config(), now = Date()
         let profile = folder.map { config.profile(for: $0) } ?? Config.defaultProfile
         var pool = config.pool(accounts.filter { $0.provider == provider }, for: profile)
         if let pin { pool = pool.filter { $0.label == pin } }
-        let order = pin == nil ? memory.router.order(pool.map { standing($0, now: now) }, conversation: conversation, model: model, now: now) : pool.map(\.id)
-        return (profile, order.compactMap { id in pool.first { $0.id == id } }, pool)
+        let able = pool.filter { if case .barred = run[$0.id]?.problem { false } else { true } }, tried = able.isEmpty ? pool : able
+        let order = pin == nil ? memory.router.order(tried.map { standing($0, now: now) }, conversation: conversation, model: model, now: now) : tried.map(\.id)
+        return (profile, order.compactMap { id in tried.first { $0.id == id } }, pool)
     }
 
     var all: [Account] { accounts }
 
-    /// The account could not be used, for a reason worth showing until it next works.
-    func failed(_ id: String, _ problem: String) {
-        run[id, default: Run()].problem = problem
+    /// The provider said it will not serve the account at all.
+    func bar(_ id: String, _ barred: Barred) {
+        run[id, default: Run()].problem = .barred(barred)
     }
 
     /// What the provider said about the account when asked.
@@ -355,7 +379,7 @@ actor Accounts {
     func fresh(_ id: String, using provider: any Provider) async throws -> Account {
         if let running = refreshing[id] { return try await running.value }
         func known() throws -> Account {
-            guard let account = accounts.first(where: { $0.id == id }) else { throw ProviderError.signedOut }
+            guard let account = accounts.first(where: { $0.id == id }) else { throw Barred.signedOut }
             return account
         }
         var account = try known()
@@ -370,11 +394,11 @@ actor Accounts {
         do {
             let renewed = try await task.value
             // Removed while it was renewing, it is not brought back.
-            guard accounts.contains(where: { $0.id == id }) else { throw ProviderError.signedOut }
+            guard accounts.contains(where: { $0.id == id }) else { throw Barred.signedOut }
             try save(renewed)
             return renewed
         } catch {
-            run[id, default: Run()].problem = "Could not renew its sign-in: \(error)"
+            run[id, default: Run()].problem = .unrenewed(error)
             throw error
         }
     }

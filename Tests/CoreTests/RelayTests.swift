@@ -3,7 +3,7 @@ import os
 import Testing
 @testable import SluiceCore
 
-/// A provider whose upstream is a local server: account `a` is spent, any other account serves.
+/// A provider whose upstream is a local server: a `429` is a spent account, and a `403` saying "closed" one that cannot serve.
 private struct Fake: Provider {
     let id = "fake"
     let upstream: URL
@@ -40,7 +40,7 @@ private struct Fake: Provider {
     /// With a name, the sign-in page is the relay's own callback and the sign-in is that account's.
     var signsInAs: String?
     func signIn(code: String, state: String, redirectURI: String, verifier: String) async throws -> Account {
-        guard let signsInAs else { throw ProviderError.signedOut }
+        guard let signsInAs else { throw Barred.signedOut }
         return Account(provider: id, subject: signsInAs, organization: nil, label: signsInAs, accessToken: "", refreshToken: "", expiresAt: .distantFuture)
     }
     func refresh(_ account: Account) async throws -> Account { account }
@@ -50,6 +50,7 @@ private struct Fake: Provider {
     func reading(status: Int, headers: [String: String]) -> Reading {
         Reading(windows: status == 429 ? [Window(name: "week", used: 1, resetsAt: .distantFuture)] : [], refused: status == 429)
     }
+    func barred(status: Int, body: Data) -> Barred? { status == 403 && body == Data("closed".utf8) ? .denied("closed") : nil }
 }
 
 private actor Hits {
@@ -85,6 +86,57 @@ private actor Hits {
 
         let pinned = try await HTTPCall.send("GET", URL(string: "http://127.0.0.1:47612/fake/pin/a/v1/thing")!)
         #expect(pinned.status == 429)
+        withExtendedLifetime((provider, server)) {}
+    }
+
+    /// An expired subscription's refusal reached Claude Code as a payment past due while another account could serve.
+    @Test func anAccountThatCannotServeIsPassedOverUntilItIsSignedInAgain() async throws {
+        let hits = Hits()
+        let provider = try Server(port: 47632) { request, writer in
+            let account = request.header("X-Account") ?? ""
+            await hits.add(account)
+            if account == "x", await !hits.accounts.contains("renewed") { return try await writer.send(403, text: "closed") }
+            try await writer.send(200, text: "served by \(account)")
+        }
+        try await provider.start()
+        let accounts = ["x", "b"].map { Account(provider: "fake", subject: $0, organization: nil, label: $0, accessToken: "", refreshToken: "", expiresAt: .distantFuture) }
+        let relay = try Relay(providers: [Fake(upstream: URL(string: "http://127.0.0.1:47632")!, signsInAs: "x")], storage: Storage(loadAccounts: { accounts }, storeAccounts: { _ in }, config: { Config() }, storeConfig: { _ in }, loadMemory: { Memory() }, storeMemory: { _ in }), port: 47633)
+        let server = try Server(port: 47633) { try await relay.handle($0, $1) }
+        try await server.start()
+
+        let url = URL(string: "http://127.0.0.1:47633/fake/v1/thing")!
+        #expect(String(decoding: try await HTTPCall.send("GET", url).body, as: UTF8.self) == "served by b")
+        #expect(try await relay.status().first { $0.label == "x" }?.problem == "closed")
+        _ = try await HTTPCall.send("GET", url)
+        #expect(await hits.accounts == ["x", "b", "b"])
+        // Left with no other, it is asked, and the client hears its own answer.
+        let pinned = try await HTTPCall.send("GET", URL(string: "http://127.0.0.1:47633/fake/pin/x/v1/thing")!)
+        #expect(pinned.status == 403 && String(decoding: pinned.body, as: UTF8.self) == "closed")
+
+        await hits.add("renewed")
+        #expect(try await HTTPCall.send("GET", URL(string: "http://127.0.0.1:47633/login/fake")!).status == 200)
+        #expect(String(decoding: try await HTTPCall.send("GET", url).body, as: UTF8.self) == "served by x")
+        withExtendedLifetime((provider, server)) {}
+    }
+
+    /// A revoked sign-in's 401 reached the client while another account could serve. A 401 may also be
+    /// the request's, so an account whose own usage still answers is not passed over for it.
+    @Test func aRefusedSignInIsTriedOnAnotherAccountAndBarsOnlyWhereTheAccountsOwnCallSaysSo() async throws {
+        let hits = Hits()
+        let provider = try Server(port: 47634) { request, writer in
+            let account = request.header("X-Account") ?? ""
+            await hits.add(account)
+            try await writer.send(account == "y" ? 401 : 200, text: "served by \(account)")
+        }
+        try await provider.start()
+        let accounts = ["y", "b"].map { Account(provider: "fake", subject: $0, organization: nil, label: $0, accessToken: "", refreshToken: "", expiresAt: .distantFuture) }
+        let relay = try Relay(providers: [Fake(upstream: URL(string: "http://127.0.0.1:47634")!)], storage: Storage(loadAccounts: { accounts }, storeAccounts: { _ in }, config: { Config() }, storeConfig: { _ in }, loadMemory: { Memory() }, storeMemory: { _ in }), port: 47635)
+        let server = try Server(port: 47635) { try await relay.handle($0, $1) }
+        try await server.start()
+
+        let url = URL(string: "http://127.0.0.1:47635/fake/v1/thing")!
+        for _ in 0..<2 { #expect(String(decoding: try await HTTPCall.send("GET", url).body, as: UTF8.self) == "served by b") }
+        #expect(await hits.accounts == ["y", "b", "y", "b"])
         withExtendedLifetime((provider, server)) {}
     }
 

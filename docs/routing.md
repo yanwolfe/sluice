@@ -16,6 +16,12 @@ Within a profile's pool:
   the next account before the client sees anything. When the last one refuses too, each is asked
   how it stands now, and one that is back after all gets the request. A plain rate limit is passed
   through.
+- **Pass over what cannot serve.** An account the provider says it will not serve at all, because
+  its subscription has lapsed or its sign-in is gone, is passed over the same way and shown with the
+  reason. It is sent no more requests until it answers again (when the panel opens, when the rest of
+  the pool is out, or when it is signed in again), unless the whole pool is in that state. A `401`
+  to a request may be about the request, so it moves the request on, and only the account's own
+  usage answering `401` too marks it signed out.
 - **Resets, with the bolt on.** A reset is used when it gives the most back. When every account of
   the pool has refused a request, one that refills everything an account has spent is used and the
   request is answered by that account: the one that refills the fewest limits, so that a wider one

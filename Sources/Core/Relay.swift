@@ -103,8 +103,8 @@ public final class Relay: Sendable {
         do {
             try await accounts.record(provider.usage(of: account), for: account.id)
             return true
-        } catch ProviderError.signedOut {
-            await accounts.failed(account.id, "Signed out. Run: sluice login \(account.provider)")
+        } catch let barred as Barred {
+            await accounts.bar(account.id, barred)
         } catch {
             log("\(account.provider) \(account.label) usage check failed: \(error)")
         }
@@ -284,12 +284,21 @@ public final class Relay: Sendable {
                     return try await writer.send(502, text: "sluice: could not reach \(provider.id): \(error.localizedDescription)")
                 }
                 let headers = response.allHeaderFields.compactMap { name, value in (name as? String).map { ($0, "\(value)") } }
+                let errorBody: Data?
+                do { errorBody = try await response.statusCode < 400 ? nil : body.reduce(into: Data()) { $0.append($1) } } catch {
+                    await ended()
+                    return try await writer.send(502, text: "sluice: \(provider.id)'s answer broke off: \(error.localizedDescription)")
+                }
                 let reading = provider.reading(status: response.statusCode, headers: Dictionary(headers.map { ($0.0.lowercased(), $0.1) }) { $1 })
-                await accounts.answered(account.id, reporting: reading.windows)
-                log("\(id) \(account.label) \(request.method) \(target.prefix { $0 != "?" }) \(response.statusCode)\(reading.refused ? " spent" : "")")
+                let barred = errorBody.flatMap { provider.barred(status: response.statusCode, body: $0) }
+                // A 401 says the sign-in is gone, or that the client's request is not fit to sign: another
+                // account is tried, and the account's own usage says which.
+                let refused = reading.refused || barred != nil || response.statusCode == 401
+                if let barred { await accounts.bar(account.id, barred) } else { await accounts.answered(account.id, reporting: reading.windows) }
+                log("\(id) \(account.label) \(request.method) \(target.prefix { $0 != "?" }) \(response.statusCode)\(reading.refused ? " spent" : refused ? " refused" : "")")
                 // The whole pool is out. An account that is back after all, or that a reset the pool holds
                 // brings back where the user said to use them, is sent the request, once.
-                if reading.refused, isLast, !refilled {
+                if refused, isLast, !refilled {
                     let back = await refills.one(for: "\(profile)/\(id)/\(pin ?? "")", refusedBy: account.id) { [self] in await refill(pool, for: model, at: provider) }
                     if let back {
                         await ended()
@@ -297,20 +306,20 @@ public final class Relay: Sendable {
                         queue = [back]
                         continue
                     }
-                } else if reading.refused, !reading.windows.contains(where: { $0.used >= 1 }) {
-                    // It refused over a limit its answers do not report, such as one model's own: it is asked
-                    // how it stands, so that the next such request is not sent to it.
+                } else if refused, barred == nil, !reading.windows.contains(where: { $0.used >= 1 }) {
+                    // It refused over a limit its answers do not report, such as one model's own, or with a 401:
+                    // it is asked how it stands, so that the next such request is not sent to it.
                     Task { await checkUsage(of: account, at: provider) }
                 }
-                if reading.refused, !isLast {
+                if refused, !isLast {
                     await ended()
                     continue
                 }
-                if let conversation, !reading.refused {
+                if let conversation, !refused {
                     await accounts.served(conversation.id, model: model, by: account.id, cacheLifetime: conversation.cacheLifetime)
                 }
                 let folder = request.callerFolder
-                let counted = Metered(base: body, count: provider.count) { spend in
+                let counted = Metered(base: errorBody.map { whole in AsyncThrowingStream { $0.yield(whole); $0.finish() } } ?? body, count: provider.count) { spend in
                     Task { await accounts.spent(spend, by: account.id, for: profile, folder: folder, conversation: conversation?.id, since: asked) }
                 }
                 do { try await writer.send(response.statusCode, headers: headers, body: counted) } catch {
@@ -348,7 +357,7 @@ public final class Relay: Sendable {
         }
         do {
             let account = try await provider.signIn(code: code, state: state, redirectURI: provider.redirect?.absoluteString ?? redirectURI, verifier: pending.verifier)
-            try await accounts.save(account)
+            try await accounts.signedIn(account)
             if let profile = pending.profile { try storage.change { try $0.move(account: account.label, to: profile) } }
             try await writer.send(200, text: "Signed in to \(provider.name) as \(account.label)\(pending.profile.map { ", for profile \($0)" } ?? ""). You can close this tab.")
         } catch {

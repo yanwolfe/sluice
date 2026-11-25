@@ -152,6 +152,15 @@ import Testing
         #expect(result.windows.allSatisfy { $0.used < 1 })
     }
 
+    /// Its refusal would otherwise reach the client while another account could serve, as a payment past due.
+    @Test func anOrganizationThatMayNotUseItsSignInBarsTheAccountAndAnotherPermissionErrorDoesNot() {
+        // As answered to an account whose subscription was canceled.
+        let lapsed = #"{"type":"error","error":{"type":"permission_error","message":"OAuth authentication is currently not allowed for this organization.","details":{"error_code":"oauth_not_allowed_for_organization"}},"request_id":"req_011ChQ13ukE2VFQggjFCijcQ"}"#
+        #expect(Claude().barred(status: 403, body: Data(lapsed.utf8)) != nil)
+        // One model kept from the organization does not keep the account from serving the others.
+        #expect(Claude().barred(status: 403, body: Data(#"{"type":"error","error":{"type":"permission_error","message":"model: not available"}}"#.utf8)) == nil)
+    }
+
     @Test func aWindowTheResponseOmitsIsNotReported() {
         #expect(reading(200, ["7d-reset": "9000", "7d-utilization": "0"]).windows.map(\.name) == ["7d"])
     }

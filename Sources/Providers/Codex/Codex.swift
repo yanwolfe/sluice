@@ -163,6 +163,9 @@ public struct Codex: Provider {
         return Reading(windows: windows, refused: status == 429)
     }
 
+    /// Nothing of the kind has been captured yet; a 401 to a call of Sluice's own is still read as a sign-in that is gone.
+    public func barred(status: Int, body: Data) -> Barred? { nil }
+
     private struct Grant: Decodable {
         var access_token: String
         var refresh_token: String?
@@ -175,7 +178,7 @@ public struct Codex: Provider {
 
     public func usage(of account: Account) async throws -> Usage {
         let (status, body) = try await HTTPCall.send("GET", Self.usage, headers: headers(account))
-        guard status == 200 else { throw ProviderError.answered(status) }
+        guard status == 200 else { throw failure(status: status, body: body) }
         return try Self.usage(in: body)
     }
 
@@ -189,8 +192,8 @@ public struct Codex: Provider {
     public func resets(of account: Account, as client: String?) async throws -> [Reset]? {
         async let list = HTTPCall.send("GET", Self.resets, headers: headers(account))
         async let usage = HTTPCall.send("GET", Self.usage, headers: headers(account))
-        for status in try await [list.0, usage.0] where status != 200 {
-            throw ProviderError.answered(status)
+        for (status, body) in try await [list, usage] where status != 200 {
+            throw failure(status: status, body: body)
         }
         return try await Self.resets(inList: list.1, usage: usage.1)
     }
@@ -210,7 +213,7 @@ public struct Codex: Provider {
 
     public func use(_ reset: Reset, of account: Account, as client: String?) async throws {
         let (status, body) = try await HTTPCall.send("POST", Self.resets.appending(path: "consume"), headers: headers(account), json: ["redeem_request_id": UUID().uuidString, "credit_id": reset.id])
-        guard status == 200 else { throw ProviderError.answered(status) }
+        guard status == 200 else { throw failure(status: status, body: body) }
         if let refusal = try Self.refusal(inClaim: body) { throw refusal }
     }
 

@@ -108,6 +108,15 @@ swapped requests read their own cache normally, so the id rewrite does not distu
 `5h-status`, `7d-status` or `7d_oi-status` (a per-model weekly window, a header those notes name
 and no capture here has shown) reads `rejected` is a spent allowance; any other `429` is a rate limit. Confirm against the first real one.
 
+**An account that lost its plan (captured 2026-11-26).** A Max account whose subscription was
+canceled still renews its sign-in, and its profile reads `organization_type: claude_free`,
+`subscription_status: canceled`. A Messages request on it is answered `403` with no rate-limit
+headers and `{"type":"error","error":{"type":"permission_error","message":"OAuth authentication is
+currently not allowed for this organization.","details":{"error_code":"oauth_not_allowed_for_organization"}}}`.
+Claude Code 2.1.332 shows that message, on `401` or `403`, as a payment past due when its own sign-in
+is Pro or Max, and as subscription access turned off by the organization otherwise. Its usage
+address answered `403`, and minutes later `429`.
+
 **Claude's meter (fitted 2026-11-14).** Claude reports a share and never what the share is of. Fitted
 with `script/fit.py` to 26 hours of Sluice's own histories: 13,000 requests on Opus 5.5 and Fable 5.2
 through a seat of five times the usage and a plan of twenty, 34 and 23 points of their weeks and 206
